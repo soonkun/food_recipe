@@ -11,7 +11,7 @@ SAMPLE = '''<html><script type="application/ld+json">{"@type":"Recipe","name":"�
 r = collect.parse_10000recipe(SAMPLE, 1)
 assert r["name"] == "코다리조림" and r["level"] == "아무나" and r["servings"] == "2인분"
 assert r["ingredients"] == [("코다리", "2마리", "재료"), ("간장", "1컵", "양념")]
-assert r["steps"] == ["끓인다 & 졸인다"] and r["image"] == "a.jpg"
+assert r["steps"] == [] and r["image"] is None and r["summary"] is None  # 작성자 글은 안 남긴다
 assert collect.parse_10000recipe("<html>no recipe</html>", 2) is None
 
 collect.DB = "/tmp/test_recipes.sqlite"; os.path.exists(collect.DB) and os.remove(collect.DB)

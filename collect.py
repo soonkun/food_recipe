@@ -131,14 +131,12 @@ def parse_10000recipe(h, rid):
     if not ingredients:  # 재료 칸이 없는 옛 글은 JSON-LD의 "코다리 2마리" 문자열을 그대로
         ingredients = [(clean(s), "", "재료") for s in ld.get("recipeIngredient", [])]
     summ = [clean(s) for s in _SUMMARY.findall(h)] + [None] * 3
-    steps = ld.get("recipeInstructions") or []
-    steps = [clean(s["text"] if isinstance(s, dict) else str(s)) for s in steps]
-    img = ld.get("image")
+    # 저작권: 작성자 글(조리문·설명·사진)은 저장하지 않는다. 이름·재료·난이도·시간·링크만 (원가 계산용).
     return dict(
-        source="10000recipe", src_id=str(rid), name=clean(ld["name"]), summary=clean(ld.get("description", "")) or None,
+        source="10000recipe", src_id=str(rid), name=clean(ld["name"]), summary=None,
         category=None, servings=summ[0] or ld.get("recipeYield"), cook_time=summ[1] or ld.get("totalTime"),
         level=summ[2], calorie=None, price=None, url=R10K_URL.format(id=rid),
-        image=img[0] if isinstance(img, list) else img, steps=steps, ingredients=ingredients)
+        image=None, steps=[], ingredients=ingredients)
 
 
 def fetch_10000recipe(rid):
