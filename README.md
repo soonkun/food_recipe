@@ -11,3 +11,11 @@
 - 결과: `data/recipes.sqlite` - `recipe`(출처·이름·인분·시간·난이도·조리법 JSON) + `ingredient`(recipe_id·이름·양·구분) + `scan`(훑은 ID).
 
 이 서버에서 막혀 있는 곳(타임아웃): 식품안전나라 레시피 API(openapi.foodsafetykorea.go.kr), 농사로(nongsaro.go.kr). 방화벽이 풀리면 추가.
+
+## 2단계: 가격 모으기 (`prices.py`)
+- `python3 prices.py seoul [--since 2025-01-01]` - 서울시 열린데이터 생필품 가격(전통시장·대형마트, 주 1회, 농축수산물 60여 품목). 결과: `price` 표(출처·날짜·품목·단위·가격·시장).
+  키는 `data/.env`의 `SEOUL_API_KEY=…` (git에 안 올라감). 자료는 2025-01부터 있다.
+- KAMIS(www.kamis.or.kr)는 이 서버에서 막혀 있다. 농림축산식품 공공데이터포털(data.mafra.go.kr, 레시피와 같은 키)의 도매 경락가격은 키가 오면 붙인다.
+
+## 방침
+- 민간 레시피 사이트 자료는 이름·재료·난이도·링크만 두고 원가 계산에만 쓴다. 답은 계산 결과 + "만드는 법은 여기: 링크". 조리문·사진은 저장도 노출도 하지 않는다.

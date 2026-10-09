@@ -19,3 +19,9 @@ con = collect.db(); collect.save(con, r); collect.save(con, r)  # 두 번 저장
 assert con.execute("SELECT count(*) FROM recipe").fetchone()[0] == 1
 assert con.execute("SELECT count(*) FROM ingredient WHERE name='코다리'").fetchone()[0] == 1
 os.remove(collect.DB); print("ok")
+
+import prices
+r = prices.seoul_row({"P_SEQ": 2062332.0, "P_DATE": "2026-10-02", "PRDLST_NM": "쌀 ", "SPCIES": "[철원] 오대쌀", "UNIT": "4kg", "QY": "1포",
+                      "A_PRICE": "22000", "M_NAME": "암사종합시장", "M_TYPE_NAME": "전통시장"})
+assert r == ("seoul", "2062332", "2026-10-02", "쌀", "[철원] 오대쌀", "4kg", "1포", 22000, "암사종합시장", "전통시장")
+print("ok prices")
