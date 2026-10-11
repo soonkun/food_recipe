@@ -96,8 +96,17 @@ def t_movers(a):
     skip = {"비누", "샴푸", "세제", "치약", "칫솔", "바디워시", "생수", "맥주", "소주", "콜라", "사이다", "라면", "컵라면", "즉석밥"}
     rows = sorted(((item, now, ref, src) for item, (now, ref, src) in _levels(con).items() if item not in skip), key=lambda t: (t[1] - t[2]) / t[2])
     fmt = lambda t: {"item": t[0], "won_per_kg_now": round(t[1]), "won_per_kg_3m_ago": round(t[2]), "change_pct": round((t[1] - t[2]) / t[2] * 100, 1), "source": t[3]}
-    return {"down": [fmt(t) for t in rows[:n] if t[1] < t[2]], "up": [fmt(t) for t in reversed(rows[-n:]) if t[1] > t[2]],
-            "note": "원인은 모른다 - 품목명으로 인터넷 조사. 요리 추천은 cheaper_recipes(main_item=품목)."}
+    # 도구 숙고가 한 턴에 한 번만 부르므로, 내린 품목마다 싸진 요리 둘을 같이 얹는다 - 한 번의 호출로 "뭐가 싸졌고 뭘 해 먹나"가 다 나오게.
+    down = []
+    for t in rows[:n]:
+        if t[1] >= t[2]:
+            continue
+        row = fmt(t)
+        row["recipes"] = [{k: r[k] for k in ("name", "level", "servings", "cost_now", "cost_ref", "change_pct", "url")}
+                          for r in cost.cheaper(con, 2, main_item=t[0], per_item=2)]
+        down.append(row)
+    return {"down": down, "up": [fmt(t) for t in reversed(rows[-n:]) if t[1] > t[2]],
+            "note": "내린 원인은 모른다 - 품목명으로 인터넷 조사 도구에 묻는다. 요리를 더 보려면 cheaper_recipes(main_item=품목). 만드는 법은 url 안내."}
 
 
 HANDLERS = {"cheaper_recipes": t_cheaper, "recipe_cost": t_recipe_cost, "item_prices": t_item_prices, "price_movers": t_movers}
