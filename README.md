@@ -38,6 +38,9 @@
   사용자는 `+ → 대화 설정 → 도구 설정`에서 이 서버를 켜야 모델에게 보인다.
 - 도구: `price_movers`(내린/오른 품목 + 내린 품목마다 싸진 음식 둘) → `cheaper_dishes`(난이도·주재료로 좁히기) → `dish_cost`(음식 이름으로 통계) ·
   `item_prices`(품목 가격) · `public_recipes`(공공 자료 레시피만 재료·링크 제공). **내린 원인**은 이 서버가 모른다 - MOPAN의 인터넷 조사 도구가 품목명으로 찾는다.
+- 공공 레시피 코퍼스(public_recipes의 재료): `collect.py rda`(농진청, 키 있음 - API 호스트 응답 대기)와 `collect.py foodsafety`(식품안전나라 COOKRCP01,
+  1,100여 건, 공공누리). 식품안전나라 호스트(116.67.90.152)는 이 서버에서 막혀 있어 다른 PC에서 받은 JSON을 `data/_incoming/foodsafety/`에 두고 돌린다:
+  `http://openapi.foodsafetykorea.go.kr/api/<키>/COOKRCP01/json/1/1000` 과 `…/1001/2000` 두 번 저장. 키는 `data/.env`의 `FOODSAFETY_API_KEY`.
 - 매일 06:30 크론: `daily.sh`(서울 가격 → 품목 원/kg → 레시피 원가 → 음식 통계). 로그 `data/daily.log`.
 
 ## 방침 (2026-10-11 소유자 결정)
