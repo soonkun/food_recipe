@@ -22,19 +22,25 @@ import dish
 
 PROTOCOL_VERSION = "2025-06-18"
 PUBLIC_SOURCES = ("rda", "foodsafety")
-NOTE_DISH = ("원가는 그 음식 레시피 여러 건의 중앙값(가격을 아는 재료 기준, 양념 포함). 특정 사이트의 레시피가 아니라 음식 단위 통계라 "
-             "링크는 없다. 만드는 법이 필요하면 public_recipes(공공 자료)를 찾아 보고, 없으면 일반적인 조리법을 자기 말로 설명한다.")
+NOTE_DISH = ("원가는 그 음식 레시피 여러 건의 중앙값(가격을 아는 재료 기준, 양념 포함)이고 cost_now/cost_ref는 레시피 한 번 분량(보통 servings인분), "
+             "cost_per_serving_*은 1인분 환산이다 - 답할 때는 'N인분 기준 X원(1인분 Y원)'으로 말한다. meal(식사·음료·디저트·간식·기타)과 "
+             "cuisine(한식·중식·일식·양식·아시아·기타)은 이름으로 나눈 분류다. 특정 사이트의 레시피가 아니라 음식 단위 통계라 링크는 없다. "
+             "만드는 법이 필요하면 public_recipes(공공 자료)를 찾아 보고, 없으면 일반적인 조리법을 자기 말로 설명한다.")
 TOOLS = [
     {"name": "price_movers",
-     "description": "석 달 전보다 값이 많이 내린 품목과 오른 품목(원/kg, 변동률). 내린 품목마다 그 재료로 만드는 싸진 음식 둘을 같이 준다. "
-                    "'요즘 뭐가 싸졌나', '싸진 걸로 뭐 해 먹나'에 먼저 부른다. 내린 원인(풍작·수입·소비 감소 등)은 모르니 품목명으로 인터넷 조사 도구에 묻는다.",
+     "description": "석 달 전보다 값이 많이 내린 품목과 오른 품목(원/kg, 변동률) - '요즘 뭐가 싸졌나/올랐나', '가격이 급락한 농산물'처럼 품목 시세가 "
+                    "주제일 때 부른다. 내린 품목마다 그 재료의 싸진 음식 둘을 덤으로 준다. '싸게 먹을 수 있는 음식·요리 추천'이 주제면 cheaper_dishes가 맞다. "
+                    "내린 원인(풍작·수입·소비 감소 등)은 모르니 품목명으로 인터넷 조사 도구에 묻는다.",
      "inputSchema": {"type": "object", "properties": {"n": {"type": "integer", "description": "내린 것·오른 것 각각 몇 개(기본 10)"}}}},
     {"name": "cheaper_dishes",
      "description": "석 달 전보다 재료 원가가 내린 음식(요리)을 추천한다. '무엇으로 뭘 해 먹나', '○○를 주재료로 싸게 먹을 수 있는 음식은', "
-                    "'초급 요리 추천'처럼 음식·요리·메뉴를 묻는 질문은 이 도구다(item_prices는 품목 가격만 준다). 결과는 음식 이름·레시피 수·지금 원가·"
-                    "석 달 전 원가·변동률·주재료·대표 재료 구성(품목:g)·난이도 분포. 음식 단위 통계라 특정 레시피나 링크는 없다.",
+                    "'초급 요리 추천'처럼 음식·요리·메뉴를 묻는 질문은 이 도구다(item_prices는 품목 가격만 준다). 기본은 끼니가 '식사'인 음식만 - "
+                    "음료·디저트를 물으면 meal을 준다. 결과는 음식 이름·끼니·계통·레시피 수·보통 인분·한 번 분량 원가와 1인분 원가(지금/석 달 전)·변동률·"
+                    "주재료·대표 재료 구성(품목:g)·난이도 분포. 음식 단위 통계라 특정 레시피나 링크는 없다.",
      "inputSchema": {"type": "object", "properties": {
          "n": {"type": "integer", "description": "몇 개(기본 10, 최대 50)"},
+         "meal": {"type": "string", "description": "끼니: 식사(기본)·음료·디저트·간식·기타·전체"},
+         "cuisine": {"type": "string", "description": "계통: 한식·중식·일식·양식·아시아(동남아·인도)·기타·전체(기본)"},
          "level": {"type": "string", "description": "난이도로 좁히기: 아무나·초급·중급·고급(그 난이도 레시피가 있는 음식)"},
          "main_item": {"type": "string", "description": "주재료 품목으로 좁히기(예: 포도·감자·사과). item_prices의 품목명"},
          "min_cost": {"type": "integer", "description": "지금 원가 하한(원, 기본 2000)"}}}},
@@ -73,8 +79,10 @@ def _asof(con):
 def t_cheaper(a):
     con = _con()
     n = max(1, min(int(a.get("n") or 10), 50))
-    rows = dish.cheaper(con, n, min_cost=int(a.get("min_cost") or 2000), level=a.get("level") or None, main_item=a.get("main_item") or None)
-    return {"asof": _asof(con), "note": NOTE_DISH, "dishes": rows}
+    meal = (a.get("meal") or "식사").replace("디저트", "디저트·간식").replace("디저트·간식·간식", "디저트·간식").replace("간식", "디저트·간식").replace("디저트·디저트·간식", "디저트·간식")
+    rows = dish.cheaper(con, n, min_cost=int(a.get("min_cost") or 2000), level=a.get("level") or None, main_item=a.get("main_item") or None,
+                        meal=meal, cuisine=a.get("cuisine") or None)
+    return {"asof": _asof(con), "meal": meal, "cuisine": a.get("cuisine") or "전체", "note": NOTE_DISH, "dishes": rows}
 
 
 def t_dish_cost(a):
@@ -135,8 +143,9 @@ def t_movers(a):
         if t[1] >= t[2]:
             continue
         row = fmt(t)
-        row["dishes"] = [{k: d[k] for k in ("dish", "n_recipes", "cost_now", "cost_ref", "change_pct", "levels")}
-                         for d in dish.cheaper(con, 2, main_item=t[0], per_item=2)]
+        picks = dish.cheaper(con, 2, main_item=t[0], per_item=2) or dish.cheaper(con, 2, main_item=t[0], per_item=2, meal="전체")  # 식사 먼저, 없으면 전체
+        row["dishes"] = [{k: d[k] for k in ("dish", "meal", "cuisine", "n_recipes", "servings", "cost_now", "cost_per_serving_now", "cost_ref", "change_pct", "levels")}
+                         for d in picks]
         down.append(row)
     return {"asof": _asof(con), "down": down, "up": [fmt(t) for t in reversed(rows[-n:]) if t[1] > t[2]],
             "note": "내린 원인은 모른다 - 품목명으로 인터넷 조사 도구에 묻는다. 음식을 더 보려면 cheaper_dishes(main_item=품목). " + NOTE_DISH}
