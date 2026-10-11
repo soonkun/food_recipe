@@ -47,8 +47,8 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {
          "items": {"type": "array", "items": {"type": "string"}, "description": "품목명(예: 양파, 돼지고기, 포도)"}}}},
     {"name": "public_recipes",
-     "description": "공공 자료 레시피(농촌진흥청 농식품정보누리, 식품안전나라)를 이름으로 찾아 재료 목록·난이도·원가·원문 링크를 준다. "
-                    "만드는 법을 보여 줄 수 있는 유일한 출처. 없으면 빈 목록.",
+     "description": "공공 자료 레시피(농촌진흥청 농식품정보누리, 식품안전나라)를 이름으로 찾아 재료 목록·조리 순서·열량·원가·출처 링크를 준다. "
+                    "만드는 법을 보여 줄 수 있는 유일한 출처(공공누리, 출처 표기). 없으면 빈 목록.",
      "inputSchema": {"type": "object", "properties": {
          "query": {"type": "string", "description": "음식 이름 또는 그 일부"},
          "n": {"type": "integer", "description": "몇 개(기본 5)"}}, "required": ["query"]}},
@@ -86,17 +86,23 @@ def t_public(a):
     q = f"%{str(a.get('query', '')).strip()}%"
     n = max(1, min(int(a.get("n") or 5), 20))
     marks = ",".join("?" * len(PUBLIC_SOURCES))
-    rows = con.execute(f"""SELECT r.id, r.name, r.source, r.level, r.servings, r.cook_time, r.calorie, r.url, c.cost_now, c.cost_ref, c.coverage
+    rows = con.execute(f"""SELECT r.id, r.name, r.source, r.level, r.servings, r.cook_time, r.calorie, r.url, r.steps, r.summary, r.category,
+                                  c.cost_now, c.cost_ref, c.coverage
                            FROM recipe r LEFT JOIN recipe_cost c ON c.recipe_id = r.id
                            WHERE r.source IN ({marks}) AND r.name LIKE ? ORDER BY r.name LIMIT ?""", (*PUBLIC_SOURCES, q, n)).fetchall()
     out = []
-    for rid, name, source, level, servings, cook_time, calorie, url, now, ref, cov in rows:
+    for rid, name, source, level, servings, cook_time, calorie, url, steps, summary, category, now, ref, cov in rows:
         ingredients = con.execute("SELECT name, qty FROM ingredient WHERE recipe_id=? ORDER BY seq", (rid,)).fetchall()
+        try:
+            steps_list = json.loads(steps) if steps else []
+        except ValueError:
+            steps_list = []
         out.append({"name": name, "source": {"rda": "농촌진흥청 농식품정보누리", "foodsafety": "식품안전나라(식약처)"}.get(source, source),
-                    "level": level, "servings": servings, "cook_time": cook_time, "calorie": calorie, "cost_now": now, "cost_ref": ref,
-                    "coverage": cov, "ingredients": [{"name": nm, "qty": qt} for nm, qt in ingredients], "url": url})
+                    "category": category, "level": level, "servings": servings, "cook_time": cook_time, "calorie": calorie,
+                    "cost_now": now, "cost_ref": ref, "coverage": cov, "ingredients": [{"name": nm, "qty": qt} for nm, qt in ingredients],
+                    "steps": steps_list, "tip": summary, "url": url})
     return {"query": a.get("query"), "recipes": out,
-            "note": "공공누리 자료라 재료·링크를 보여 줘도 된다. 비어 있으면 그 음식의 공공 레시피가 없는 것 - dish_cost로 통계만 답한다."}
+            "note": "공공누리 자료라 재료·조리 순서·링크를 보여 줘도 된다(출처 표기). 비어 있으면 그 음식의 공공 레시피가 없는 것 - dish_cost로 통계만 답한다."}
 
 
 def t_item_prices(a):

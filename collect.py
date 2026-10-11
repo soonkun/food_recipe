@@ -1,6 +1,11 @@
 """레시피 수집기. 출처마다 함수 하나, 결과는 data/recipes.sqlite 한 파일.
 
   python collect.py rda                 농촌진흥청 농식품정보누리 레시피 API (537건, RDA_FOOD_API_KEY 필요)
+  python collect.py foodsafety [--file 경로…]
+                                        식품안전나라 조리식품 레시피 DB(COOKRCP01, 1,100여 건, 공공누리). FOODSAFETY_API_KEY로 API를 직접 받거나,
+                                        이 서버에서 그 호스트가 막혀 있으면 다른 곳에서 받은 JSON(…/COOKRCP01/json/1/1000 응답)을 --file로 넣는다.
+                                        --file 없이 부르면 data/_incoming/foodsafety/*.json 도 함께 읽는다.
+  키는 환경변수 또는 data/.env (SEOUL·MAFRA·RDA_FOOD·FOODSAFETY_API_KEY).
   python collect.py 10000recipe [--from 6800000] [--to 7090000] [--workers 4]
                                         만개의레시피 ID 순서대로 훑기(약 28만 건). 끊겨도 다시 돌리면 안 본 ID만 이어서 본다.
 """
@@ -24,6 +29,19 @@ CREATE TABLE IF NOT EXISTS ingredient(
 CREATE INDEX IF NOT EXISTS ingredient_name ON ingredient(name);
 CREATE TABLE IF NOT EXISTS scan(source TEXT, src_id INTEGER, status TEXT, PRIMARY KEY(source, src_id));
 """
+
+
+def env(name):
+    """환경변수 → data/.env 순. 없으면 None."""
+    if os.environ.get(name):
+        return os.environ[name]
+    path = os.path.join(os.path.dirname(DB), ".env")
+    if os.path.exists(path):
+        for line in open(path):
+            k, _, v = line.strip().partition("=")
+            if k == name and v:
+                return v
+    return None
 
 
 def db():
@@ -102,6 +120,86 @@ def collect_rda(key):
     print(f"rda: {len(base)} recipes")
 
 
+# ---------------- 식품안전나라 COOKRCP01 ----------------
+FS_URL = "http://openapi.foodsafetykorea.go.kr/api/{key}/COOKRCP01/json/{start}/{end}"
+FS_PAGE = "https://www.foodsafetykorea.go.kr/api/openApiInfo.do?menu_grp=MENU_GRP31&menu_no=661&svc_no=COOKRCP01"
+_FS_ITEM = re.compile(r"^\s*(.*?[가-힣a-zA-Z)\]])\s*([\d½¼¾⅓⅔][\d./~\-\s]*[^,]*|약간|적당량|조금)?\s*$")
+
+
+def parse_fs_parts(text):
+    """RCP_PARTS_DTLS → [(이름, 양, 구분)]. '●양념장 : 고추장 20g(1큰술), …' 처럼 줄·구분 머리말이 있고 쉼표로 나뉜다."""
+    out = []
+    kind = "재료"
+    for line in re.split(r"[\n\r]+", text or ""):
+        line = line.strip().lstrip("●•·-* ")
+        if not line:
+            continue
+        m = re.match(r"^([가-힣A-Za-z ]{1,12})\s*[:：]\s*(.*)$", line)
+        if m:
+            kind, line = m.group(1).strip() or kind, m.group(2)
+        for item in re.split(r",|、", line):
+            item = item.strip().rstrip(".")
+            if not item:
+                continue
+            # 이름은 첫 숫자(또는 '약간')가 나오기 전까지
+            mm = re.match(r"^(.*?)(?=\s*(?:\d|½|¼|¾|⅓|⅔|약간|적당량|조금)|$)(.*)$", item)
+            name, qty = (mm.group(1).strip(), mm.group(2).strip()) if mm else (item, "")
+            name = re.sub(r"\(.*?\)$", "", name).strip()  # '새송이버섯(소)' → 새송이버섯
+            if name:
+                out.append((name, qty, kind))
+    return out
+
+
+def fs_rows_from_api(key):
+    rows, start, page = [], 1, 1000
+    while True:
+        d = json.loads(get(FS_URL.format(key=key, start=start, end=start + page - 1)))
+        body = d.get("COOKRCP01") or sys.exit(f"foodsafety API: {str(d)[:300]}")
+        rows += body.get("row", [])
+        total = int(body.get("total_count") or 0)
+        print(f"  foodsafety API {start}-{start+page-1}/{total}", flush=True)
+        if start + page > total or not body.get("row"):
+            return rows
+        start += page
+
+
+def fs_rows_from_files(paths):
+    rows = []
+    for path in paths:
+        d = json.load(open(path, encoding="utf-8"))
+        body = d.get("COOKRCP01") or d
+        rows += body.get("row", body if isinstance(body, list) else [])
+        print(f"  {os.path.basename(path)}: {len(body.get('row', []))}건")
+    return rows
+
+
+def collect_foodsafety(files):
+    paths = list(files or [])
+    inbox = os.path.join(os.path.dirname(DB), "_incoming", "foodsafety")
+    if not files and os.path.isdir(inbox):
+        paths = sorted(os.path.join(inbox, f) for f in os.listdir(inbox) if f.lower().endswith(".json"))
+    key = env("FOODSAFETY_API_KEY")
+    rows = fs_rows_from_files(paths) if paths else []
+    if not rows and key:
+        rows = fs_rows_from_api(key)
+    if not rows:
+        sys.exit("식품안전나라 자료가 없다: FOODSAFETY_API_KEY(API) 또는 --file / data/_incoming/foodsafety/*.json")
+    con = db()
+    n = 0
+    for r in rows:
+        if not r.get("RCP_NM"):
+            continue
+        steps = [re.sub(r"\s*[a-z]$", "", (r.get(f"MANUAL{i:02d}") or "").strip()) for i in range(1, 21)]
+        save(con, dict(
+            source="foodsafety", src_id=str(r.get("RCP_SEQ")), name=r["RCP_NM"].strip(), summary=r.get("RCP_NA_TIP") or None,
+            category=f"{r.get('RCP_PAT2','')}/{r.get('RCP_WAY2','')}", servings=r.get("INFO_WGT") or None, cook_time=None, level=None,
+            calorie=r.get("INFO_ENG") or None, price=None, url=FS_PAGE, image=r.get("ATT_FILE_NO_MAIN") or None,
+            steps=[s for s in steps if s], ingredients=parse_fs_parts(r.get("RCP_PARTS_DTLS"))))
+        n += 1
+    con.commit()
+    print(f"foodsafety: {n} recipes")
+
+
 # ---------------- 만개의레시피 ----------------
 R10K_URL = "https://www.10000recipe.com/recipe/{id}"
 _LD = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.S)
@@ -170,12 +268,15 @@ def collect_10000recipe(lo, hi, workers):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("source", choices=["rda", "10000recipe"])
+    ap.add_argument("source", choices=["rda", "10000recipe", "foodsafety"])
+    ap.add_argument("--file", nargs="*", help="foodsafety: 받아 둔 COOKRCP01 JSON 파일들")
     ap.add_argument("--from", dest="lo", type=int, default=6800000)
     ap.add_argument("--to", dest="hi", type=int, default=7090000)
     ap.add_argument("--workers", type=int, default=4)
     a = ap.parse_args()
     if a.source == "rda":
-        collect_rda(os.environ.get("RDA_FOOD_API_KEY") or sys.exit("RDA_FOOD_API_KEY 환경변수가 없다 (koreanfood.rda.go.kr 오픈API 키)"))
+        collect_rda(env("RDA_FOOD_API_KEY") or sys.exit("RDA_FOOD_API_KEY가 없다 (환경변수 또는 data/.env; koreanfood.rda.go.kr 오픈API 키)"))
+    elif a.source == "foodsafety":
+        collect_foodsafety(a.file)
     else:
         collect_10000recipe(a.lo, a.hi, a.workers)
