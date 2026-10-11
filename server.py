@@ -2,11 +2,15 @@
 
   python3 server.py [--port 8230]
 
+방침(README): 민간 레시피 사이트 자료는 **음식 단위 통계**(감자조림의 보통 재료 구성과 원가)를 내는 데만 쓰고, 개별 레시피·링크·원문 재료 목록은
+밖으로 내보내지 않는다. 레시피 본문과 링크는 공공 자료(농진청·식품안전나라)만 보여준다(public_recipes).
+
 도구
-  cheaper_recipes  석 달 전보다 원가가 내린 요리(난이도·주재료로 좁히기). 답은 원가·변동률·주재료·원문 링크. 조리문은 주지 않는다 - 링크로 안내.
-  recipe_cost      이름으로 레시피를 찾아 지금 원가·석 달 전 원가·재료별 g을 준다.
-  item_prices      품목의 지금/석 달 전 원/kg(출처 포함). 품목을 안 주면 전부.
-  price_movers     석 달 전보다 많이 내린/오른 품목 - "요즘 뭐가 싸졌나"의 답. 폭락 원인은 이 서버가 모른다: 인터넷 조사 도구에 품목명으로 묻는다.
+  price_movers     석 달 전보다 많이 내린/오른 품목 + 내린 품목마다 싸진 음식 둘. "요즘 뭐가 싸졌나"에 먼저 부른다.
+  cheaper_dishes   석 달 전보다 원가가 내린 음식(난이도·주재료로 좁히기). 음식 이름·레시피 수·원가·변동률·대표 재료 구성.
+  dish_cost        음식 이름으로 보통 재료 구성과 원가.
+  item_prices      품목의 지금/석 달 전 원/kg.
+  public_recipes   공공 자료 레시피(농진청·식품안전나라)를 이름으로 찾아 재료·링크를 준다 - 본문을 보여줄 수 있는 유일한 출처.
 
 프로토콜은 soonkun/mcp_server/maps/server.py와 같다(JSON-RPC over HTTP POST /mcp: initialize·tools/list·tools/call). GET /healthz.
 """
@@ -14,30 +18,40 @@ import argparse, json, sqlite3, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import cost
+import dish
 
 PROTOCOL_VERSION = "2025-06-18"
+PUBLIC_SOURCES = ("rda", "foodsafety")
+NOTE_DISH = ("원가는 그 음식 레시피 여러 건의 중앙값(가격을 아는 재료 기준, 양념 포함). 특정 사이트의 레시피가 아니라 음식 단위 통계라 "
+             "링크는 없다. 만드는 법이 필요하면 public_recipes(공공 자료)를 찾아 보고, 없으면 일반적인 조리법을 자기 말로 설명한다.")
 TOOLS = [
-    {"name": "cheaper_recipes",
-     "description": "석 달 전보다 재료 원가가 많이 내린 요리를 추천한다. 농산물 값이 내렸을 때 '그걸로 뭘 해 먹을까'의 답. 결과는 요리 이름·"
-                    "난이도(아무나/초급/중급/고급)·인분·지금 원가·석 달 전 원가·변동률·주재료·원문 링크. 만드는 법은 링크를 안내한다(저작권).",
+    {"name": "price_movers",
+     "description": "석 달 전보다 값이 많이 내린 품목과 오른 품목(원/kg, 변동률). 내린 품목마다 그 재료로 만드는 싸진 음식 둘을 같이 준다. "
+                    "'요즘 뭐가 싸졌나', '싸진 걸로 뭐 해 먹나'에 먼저 부른다. 내린 원인(풍작·수입·소비 감소 등)은 모르니 품목명으로 인터넷 조사 도구에 묻는다.",
+     "inputSchema": {"type": "object", "properties": {"n": {"type": "integer", "description": "내린 것·오른 것 각각 몇 개(기본 10)"}}}},
+    {"name": "cheaper_dishes",
+     "description": "석 달 전보다 재료 원가가 많이 내린 음식을 추천한다. 결과는 음식 이름·레시피 수·지금 원가·석 달 전 원가·변동률·주재료·"
+                    "대표 재료 구성(품목:g)·난이도 분포. 음식 단위 통계라 특정 레시피나 링크는 없다.",
      "inputSchema": {"type": "object", "properties": {
          "n": {"type": "integer", "description": "몇 개(기본 10, 최대 50)"},
-         "level": {"type": "string", "description": "난이도로 좁히기: 아무나·초급·중급·고급"},
+         "level": {"type": "string", "description": "난이도로 좁히기: 아무나·초급·중급·고급(그 난이도 레시피가 있는 음식)"},
          "main_item": {"type": "string", "description": "주재료 품목으로 좁히기(예: 포도·감자·사과). item_prices의 품목명"},
-         "min_cost": {"type": "integer", "description": "지금 원가 하한(원, 기본 2000 - 양념만 있는 글을 거른다)"}}}},
-    {"name": "recipe_cost",
-     "description": "요리 이름(일부)으로 레시피를 찾아 재료 원가를 계산해 준다: 지금 원가, 석 달 전 원가, 가격을 아는 재료 비율, 재료별 g.",
+         "min_cost": {"type": "integer", "description": "지금 원가 하한(원, 기본 2000)"}}}},
+    {"name": "dish_cost",
+     "description": "음식 이름(일부)으로 그 음식의 보통 재료 구성(품목:g)과 지금/석 달 전 원가, 레시피 수, 난이도 분포를 준다.",
      "inputSchema": {"type": "object", "properties": {
-         "query": {"type": "string", "description": "요리 이름 또는 그 일부(예: 감자조림)"},
+         "query": {"type": "string", "description": "음식 이름 또는 그 일부(예: 감자조림)"},
          "n": {"type": "integer", "description": "몇 개(기본 5)"}}, "required": ["query"]}},
     {"name": "item_prices",
      "description": "농축수산물 품목의 지금 가격과 석 달 전 가격(원/kg)과 변동률. 품목을 안 주면 가격을 아는 품목 전부.",
      "inputSchema": {"type": "object", "properties": {
          "items": {"type": "array", "items": {"type": "string"}, "description": "품목명(예: 양파, 돼지고기, 포도)"}}}},
-    {"name": "price_movers",
-     "description": "석 달 전보다 값이 많이 내린 품목과 오른 품목. '요즘 뭐가 싸졌나'에 먼저 부른다. 내린 원인(풍작·수입·소비 감소 등)은 "
-                    "이 도구가 모르니 품목명으로 인터넷 조사 도구에 묻는다.",
-     "inputSchema": {"type": "object", "properties": {"n": {"type": "integer", "description": "내린 것·오른 것 각각 몇 개(기본 10)"}}}},
+    {"name": "public_recipes",
+     "description": "공공 자료 레시피(농촌진흥청 농식품정보누리, 식품안전나라)를 이름으로 찾아 재료 목록·난이도·원가·원문 링크를 준다. "
+                    "만드는 법을 보여 줄 수 있는 유일한 출처. 없으면 빈 목록.",
+     "inputSchema": {"type": "object", "properties": {
+         "query": {"type": "string", "description": "음식 이름 또는 그 일부"},
+         "n": {"type": "integer", "description": "몇 개(기본 5)"}}, "required": ["query"]}},
 ]
 
 
@@ -45,33 +59,44 @@ def _con():
     return sqlite3.connect(cost.DB, timeout=30)
 
 
+def _levels(con):
+    return cost.item_levels(con)
+
+
+def _asof(con):
+    row = con.execute("SELECT asof FROM dish_cost LIMIT 1").fetchone()
+    return row[0] if row else None
+
+
 def t_cheaper(a):
     con = _con()
     n = max(1, min(int(a.get("n") or 10), 50))
-    rows = cost.cheaper(con, n, min_cost=int(a.get("min_cost") or 2000), level=a.get("level") or None, main_item=a.get("main_item") or None)
-    asof = con.execute("SELECT asof FROM recipe_cost LIMIT 1").fetchone()
-    return {"asof": asof[0] if asof else None, "note": "원가는 재료값만(양념 포함, 가격을 아는 재료 기준). 만드는 법은 url을 안내할 것.", "recipes": rows}
+    rows = dish.cheaper(con, n, min_cost=int(a.get("min_cost") or 2000), level=a.get("level") or None, main_item=a.get("main_item") or None)
+    return {"asof": _asof(con), "note": NOTE_DISH, "dishes": rows}
 
 
-def t_recipe_cost(a):
+def t_dish_cost(a):
+    con = _con()
+    rows = dish.lookup(con, str(a.get("query", "")), max(1, min(int(a.get("n") or 5), 20)))
+    return {"query": a.get("query"), "asof": _asof(con), "note": NOTE_DISH, "dishes": rows}
+
+
+def t_public(a):
     con = _con()
     q = f"%{str(a.get('query', '')).strip()}%"
     n = max(1, min(int(a.get("n") or 5), 20))
-    rows = con.execute("""SELECT r.id, r.name, r.level, r.servings, r.cook_time, c.cost_now, c.cost_ref, c.coverage, c.items, c.main_item, r.url, r.source
-                          FROM recipe r JOIN recipe_cost c ON c.recipe_id = r.id WHERE r.name LIKE ? AND c.n_priced > 0
-                          ORDER BY c.coverage DESC, c.n_total DESC LIMIT ?""", (q, n)).fetchall()
+    marks = ",".join("?" * len(PUBLIC_SOURCES))
+    rows = con.execute(f"""SELECT r.id, r.name, r.source, r.level, r.servings, r.cook_time, r.calorie, r.url, c.cost_now, c.cost_ref, c.coverage
+                           FROM recipe r LEFT JOIN recipe_cost c ON c.recipe_id = r.id
+                           WHERE r.source IN ({marks}) AND r.name LIKE ? ORDER BY r.name LIMIT ?""", (*PUBLIC_SOURCES, q, n)).fetchall()
     out = []
-    for rid, name, lvl, servings, cook_time, now, ref, cov, items, main, url, source in rows:
+    for rid, name, source, level, servings, cook_time, calorie, url, now, ref, cov in rows:
         ingredients = con.execute("SELECT name, qty FROM ingredient WHERE recipe_id=? ORDER BY seq", (rid,)).fetchall()
-        out.append({"id": rid, "name": name, "level": lvl, "servings": servings, "cook_time": cook_time, "cost_now": now, "cost_ref": ref,
-                    "change_pct": round((now - ref) / ref * 100, 1) if ref else None, "coverage": cov, "main_item": main,
-                    "items_g": dict(kv.split(":") for kv in items.split(",") if kv),
-                    "ingredients": [{"name": nm, "qty": qt} for nm, qt in ingredients], "url": url, "source": source})
-    return {"query": a.get("query"), "recipes": out, "note": "ingredients는 재료 이름·양만(조리문 없음). 만드는 법은 url."}
-
-
-def _levels(con):
-    return cost.item_levels(con)
+        out.append({"name": name, "source": {"rda": "농촌진흥청 농식품정보누리", "foodsafety": "식품안전나라(식약처)"}.get(source, source),
+                    "level": level, "servings": servings, "cook_time": cook_time, "calorie": calorie, "cost_now": now, "cost_ref": ref,
+                    "coverage": cov, "ingredients": [{"name": nm, "qty": qt} for nm, qt in ingredients], "url": url})
+    return {"query": a.get("query"), "recipes": out,
+            "note": "공공누리 자료라 재료·링크를 보여 줘도 된다. 비어 있으면 그 음식의 공공 레시피가 없는 것 - dish_cost로 통계만 답한다."}
 
 
 def t_item_prices(a):
@@ -96,20 +121,20 @@ def t_movers(a):
     skip = {"비누", "샴푸", "세제", "치약", "칫솔", "바디워시", "생수", "맥주", "소주", "콜라", "사이다", "라면", "컵라면", "즉석밥"}
     rows = sorted(((item, now, ref, src) for item, (now, ref, src) in _levels(con).items() if item not in skip), key=lambda t: (t[1] - t[2]) / t[2])
     fmt = lambda t: {"item": t[0], "won_per_kg_now": round(t[1]), "won_per_kg_3m_ago": round(t[2]), "change_pct": round((t[1] - t[2]) / t[2] * 100, 1), "source": t[3]}
-    # 도구 숙고가 한 턴에 한 번만 부르므로, 내린 품목마다 싸진 요리 둘을 같이 얹는다 - 한 번의 호출로 "뭐가 싸졌고 뭘 해 먹나"가 다 나오게.
+    # 도구 숙고가 한 턴에 한 번만 부르므로, 내린 품목마다 싸진 음식 둘을 같이 얹는다 - 한 번의 호출로 "뭐가 싸졌고 뭘 해 먹나"가 다 나오게.
     down = []
     for t in rows[:n]:
         if t[1] >= t[2]:
             continue
         row = fmt(t)
-        row["recipes"] = [{k: r[k] for k in ("name", "level", "servings", "cost_now", "cost_ref", "change_pct", "url")}
-                          for r in cost.cheaper(con, 2, main_item=t[0], per_item=2)]
+        row["dishes"] = [{k: d[k] for k in ("dish", "n_recipes", "cost_now", "cost_ref", "change_pct", "levels")}
+                         for d in dish.cheaper(con, 2, main_item=t[0], per_item=2)]
         down.append(row)
-    return {"down": down, "up": [fmt(t) for t in reversed(rows[-n:]) if t[1] > t[2]],
-            "note": "내린 원인은 모른다 - 품목명으로 인터넷 조사 도구에 묻는다. 요리를 더 보려면 cheaper_recipes(main_item=품목). 만드는 법은 url 안내."}
+    return {"asof": _asof(con), "down": down, "up": [fmt(t) for t in reversed(rows[-n:]) if t[1] > t[2]],
+            "note": "내린 원인은 모른다 - 품목명으로 인터넷 조사 도구에 묻는다. 음식을 더 보려면 cheaper_dishes(main_item=품목). " + NOTE_DISH}
 
 
-HANDLERS = {"cheaper_recipes": t_cheaper, "recipe_cost": t_recipe_cost, "item_prices": t_item_prices, "price_movers": t_movers}
+HANDLERS = {"price_movers": t_movers, "cheaper_dishes": t_cheaper, "dish_cost": t_dish_cost, "item_prices": t_item_prices, "public_recipes": t_public}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -124,9 +149,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/healthz":
             con = _con()
-            n = con.execute("SELECT count(*) FROM recipe_cost").fetchone()[0]
-            asof = con.execute("SELECT asof FROM recipe_cost LIMIT 1").fetchone()
-            return self._send(200, {"ok": True, "recipes_costed": n, "asof": asof[0] if asof else None})
+            n = con.execute("SELECT count(*) FROM dish_cost").fetchone()[0]
+            return self._send(200, {"ok": True, "dishes": n, "asof": _asof(con)})
         self._send(404, {"error": "not found"})
 
     def do_POST(self):
@@ -165,5 +189,6 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, default=8230)
     ap.add_argument("--host", default="127.0.0.1")
     a = ap.parse_args()
+    sqlite3.connect(cost.DB, timeout=30).executescript(dish.SCHEMA)  # 표가 아직 없어도 /healthz와 도구가 빈 결과로 답하게
     print(f"food_recipe MCP on http://{a.host}:{a.port}/mcp", flush=True)
     ThreadingHTTPServer((a.host, a.port), Handler).serve_forever()
