@@ -10,6 +10,7 @@
 """
 import json
 import os
+import random
 import re
 import sqlite3
 import statistics
@@ -21,7 +22,7 @@ DB = os.path.join(HERE, "data", "recipes.sqlite")
 MIN_RECIPES = 5
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS dish_cost(dish TEXT PRIMARY KEY, n_recipes INTEGER, n_costed INTEGER, cost_now REAL, cost_ref REAL, change_pct REAL,
-  main_item TEXT, items TEXT, levels TEXT, asof TEXT, meal TEXT, cuisine TEXT, servings REAL, cost_now_ps REAL, cost_ref_ps REAL);
+  main_item TEXT, items TEXT, levels TEXT, asof TEXT, meal TEXT, cuisine TEXT, servings REAL, cost_now_ps REAL, cost_ref_ps REAL, role TEXT);
 CREATE INDEX IF NOT EXISTS dish_cost_main ON dish_cost(main_item);
 CREATE INDEX IF NOT EXISTS dish_cost_meal ON dish_cost(meal, cuisine);
 """
@@ -50,7 +51,7 @@ _SUF = re.compile(rf"^([가-힣]{{0,10}}?(?:{SUFFIX}))$")
 # ---- 분류(소유자 2026-10-11): 끼니 네 가지 × 요리 계통 여섯 가지. 이름의 낱말로 고르고 못 고르면 식사·한식.
 MEAL_RULES = (
     ("음료", r"주스|쥬스|에이드|스무디|라떼|밀크티|식혜|수정과|칵테일|쉐이크|셰이크|커피|음료|차$|티$|우유$|두유|요거트음료|레모네이드|모히토|청량|탄산|주$|와인|막걸리|맥주|소주|칵테일|하이볼"),
-    ("디저트·간식", r"잼|케이크|케익|쿠키|빵|파이|타르트|머핀|스콘|도넛|푸딩|젤리|빙수|화채|탕후루|마카롱|브라우니|와플|팬케이크|핫케이크|요거트|아이스크림|샤베트|셔벗|"
+    ("디저트·간식", r"잼|케이크|케익|쿠키|빵|파이|타르트|머핀|스콘|도넛|푸딩|젤리|빙수|화채|탕후루|맛탕|마카롱|브라우니|와플|팬케이크|핫케이크|요거트|아이스크림|샤베트|셔벗|"
                 r"시럽|^[가-힣]*청$|과일샐러드|초콜릿|초코|캔디|사탕|젤라또|티라미수|크로플|마들렌|피낭시에|카스테라|카스텔라|식빵$|베이글|크루아상|크래커|약과|강정$|"
                 r"다식|양갱|경단|송편|인절미|설기|백설기|떡$|호떡|붕어빵|핫도그|츄러스|과자|칩$|스낵|시리얼|그래놀라|견과|말랭이|절편|꿀떡|찹쌀떡|모찌|도라야키|푸딩"),
     ("기타", r"반죽|육수|양념장|양념$|소스$|드레싱|마요네즈|가루$|페이스트|스톡|육수|밑간|절임물|피클물|시즈닝|버터$|오일$|기름$|장$|식초$|물$"),
@@ -86,10 +87,36 @@ def category_of(dish: str) -> tuple[str, str]:
         if re.search(pat, dish):
             cuisine = name
             break
-    if meal in ("음료", "디저트·간식") and cuisine == "한식" and not re.search(r"식혜|수정과|화채|약과|강정|다식|양갱|경단|송편|인절미|설기|떡|호떡|붕어빵|한과|유과|미숫가루|쌍화", dish):
+    if meal in ("음료", "디저트·간식") and cuisine == "한식" and not re.search(r"식혜|수정과|화채|약과|강정|다식|양갱|경단|송편|인절미|설기|떡|호떡|붕어빵|한과|유과|미숫가루|쌍화|맛탕", dish):
         cuisine = "기타"  # 주스·케이크 같은 보편 디저트·음료는 한식이 아니다
     return meal, cuisine
 
+
+# ---- 식사 안의 역할(소유자 2026-10-11: 점심도 저녁도 양배추사과샐러드를 추천하면 안 된다).
+# 주식(밥·면), 국찌개, 메인(고기·생선 요리), 반찬(무침·나물·작은 조림·볶음), 간단(샌드위치·토스트·샐러드·죽 - 아침·브런치).
+PROTEIN = r"돼지|소고기|쇠고기|한우|닭|오리|삼겹|목살|갈비|등갈비|생선|고등어|갈치|조기|명태|황태|코다리|동태|북어|오징어|낙지|주꾸미|쭈꾸미|문어|새우|전복|꽃게|게|연어|참치|장어|삼치|가자미|꽁치|훈제|차돌|불고기|제육|수육|보쌈|족발|스테이크|함박|돈까스|돈가스|가츠|커틀릿|치킨|윙|너겟|소시지|소세지|햄|스팸|베이컨|두부|계란|달걀|어묵|오뎅|탕수육|깐풍|가라아게|닭갈비|닭볶음탕|찜닭|두루치기|떡갈비|산적|동그랑땡|미트볼"
+ROLE_RULES = (
+    ("간단", r"샌드위치|토스트|오믈렛|스크램블|팬케이크|핫케이크|와플|프렌치토스트|에그|브런치|죽$|오트밀|시리얼|그래놀라|주먹밥|유부초밥|삼각김밥|카나페|핑거푸드"),
+    ("국찌개", r"국$|탕$|찌개|전골|스튜|수프|스프|나베|샤브샤브|해장국|곰탕|설렁탕|육개장|미역국|된장국|콩나물국|북엇국|북어국|순두부|부대찌개|김치찜$|갈비탕|삼계탕|감자탕|닭곰탕|매운탕|지리|라멘|쌀국수|우동|칼국수|수제비|떡국|만둣국|만두국|짬뽕|짬뽕탕"),
+    ("주식", r"밥$|볶음밥|비빔밥|덮밥|김밥|죽|국수|면$|냉면|막국수|라면|파스타|스파게티|리조또|리조토|피자|버거|떡볶이|만두$|팟타이|짜장|카레|커리|오므라이스|돈부리|규동|초밥|스시|롤$|타코|부리또|부리토|퀘사디아|라자냐|뇨끼|쫄면|비빔면|콩국수|잔치국수|소바|메밀|파에야|빠에야|필라프|볶음면|야키소바|라이스|도시락|까르보나라|카르보나라|알리오|봉골레|라구|로제|아라비아타|페스토|마카로니|우동$|소면|중면|쫄면|막국수|물회"),
+)
+
+
+def role_of(dish: str) -> str:
+    for name, pat in ROLE_RULES:
+        if re.search(pat, dish):
+            return name
+    if re.search(r"샐러드|무침|나물|장아찌|짱아찌|김치$|깍두기|겉절이|피클|절임|초무침|냉채|생채|쌈$|장$|젓갈|젓$|지$", dish):
+        return "반찬"
+    if re.search(r"구이|찜|조림|볶음|튀김|강정|말이|전$|부침개|파전|까스|가스|스테이크|갈비|불고기|제육|수육|보쌈|족발|두루치기|떡갈비|산적|탕수육|깐풍|유린기|꿔바로우|마파두부|찹스테이크|로스트|바비큐|립$|폭립|감바스|아히요|프라이$", dish):
+        return "메인" if re.search(PROTEIN, dish) else "반찬"
+    return "메인" if re.search(PROTEIN, dish) else "반찬"
+
+
+# 끼니 때에 어울리는 역할(먼저 적은 것이 우선)
+WHEN_ROLES = {"아침": ("간단", "국찌개", "주식"), "점심": ("주식", "메인", "국찌개"), "저녁": ("메인", "국찌개", "주식"), "야식": ("주식", "간단", "메인"),
+              "간식": ("간단",), "반찬": ("반찬",), "손님": ("메인", "국찌개", "주식")}
+DEFAULT_ROLES = ("주식", "메인", "국찌개")  # 때를 말하지 않은 "음식 추천"에 반찬·샐러드만 내지 않게
 
 _SERV = re.compile(r"(\d+)\s*인분")
 
@@ -156,21 +183,24 @@ def build(con) -> None:
         meal, cuisine = category_of(dish)
         out.append((dish, len(recs), len(good), round(now), round(ref), round((now - ref) / ref * 100, 1) if ref else None,
                     main[0][0] if main else None, json.dumps(typical, ensure_ascii=False), json.dumps(levels, ensure_ascii=False), asof,
-                    meal, cuisine, servings, round(now_ps) if now_ps else None, round(ref_ps) if ref_ps else None))
-    con.executemany("INSERT INTO dish_cost VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", out)
+                    meal, cuisine, servings, round(now_ps) if now_ps else None, round(ref_ps) if ref_ps else None,
+                    role_of(dish) if meal == "식사" else None))
+    con.executemany("INSERT INTO dish_cost VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", out)
     con.commit()
     print(f"dish_cost: 음식 {len(out):,}개(레시피 {MIN_RECIPES}건 이상), 제목에서 음식을 뽑은 레시피 {sum(len(v) for v in groups.values()):,}/{len(rows):,}")
-    print("  끼니:", dict(Counter(o[10] for o in out)), " 계통:", dict(Counter(o[11] for o in out)))
+    print("  끼니:", dict(Counter(o[10] for o in out)), " 계통:", dict(Counter(o[11] for o in out)), " 역할:", dict(Counter(o[15] for o in out if o[15])))
 
 
-COLS = "dish, n_recipes, n_costed, cost_now, cost_ref, change_pct, main_item, items, levels, meal, cuisine, servings, cost_now_ps, cost_ref_ps"
+COLS = "dish, n_recipes, n_costed, cost_now, cost_ref, change_pct, main_item, items, levels, meal, cuisine, servings, cost_now_ps, cost_ref_ps, role"
 MEALS = ("식사", "음료", "디저트·간식", "기타")
 CUISINES = ("한식", "중식", "일식", "양식", "아시아", "기타")
 
 
-def cheaper(con, n=20, min_cost=2000, level=None, main_item=None, per_item=3, meal="식사", cuisine=None):
-    """석 달 전보다 원가가 내린 음식. 기본은 끼니=식사만(소유자: "저렴한 음식 추천"에 포도주스가 나오면 안 된다).
-    주재료마다 per_item개까지. level은 그 난이도 레시피가 하나라도 있는 음식."""
+def cheaper(con, n=20, min_cost=2000, level=None, main_item=None, per_item=3, meal="식사", cuisine=None, when=None, role=None,
+            shuffle=True):
+    """석 달 전보다 원가가 내린 음식. 기본은 끼니=식사이고 역할은 주식·메인·국찌개(반찬·샐러드만 내지 않게); `when`(아침·점심·저녁…)이
+    오면 그때에 맞는 역할로, `role`이 오면 그 역할만. 주재료마다 per_item개, 역할마다 고르게. 같은 질문에 늘 같은 답이 나오지 않게
+    상위 후보 안에서 조금 섞는다(하락폭이 클수록 앞에 오되 순서가 고정되진 않는다)."""
     where, args = "cost_now >= ? AND cost_ref > 0", [min_cost]
     if main_item:
         where += " AND main_item = ?"
@@ -181,15 +211,33 @@ def cheaper(con, n=20, min_cost=2000, level=None, main_item=None, per_item=3, me
     if cuisine and cuisine != "전체":
         where += " AND cuisine = ?"
         args.append(cuisine)
+    roles = None
+    if role and role != "전체":
+        roles = (role,)
+    elif when and when in WHEN_ROLES:
+        roles = WHEN_ROLES[when]
+    elif (meal or "식사") == "식사" and not main_item:
+        roles = DEFAULT_ROLES
+    if roles:
+        where += f" AND role IN ({','.join('?' * len(roles))})"
+        args += list(roles)
     rows = con.execute(f"SELECT {COLS} FROM dish_cost WHERE {where} ORDER BY change_pct ASC LIMIT ?", args + [n * 30]).fetchall()
-    out, seen = [], Counter()
+    if shuffle and len(rows) > n:
+        pool = rows[: n * 4]
+        rng = random.Random()
+        rows = sorted(pool, key=lambda r: (r[5] or 0) * rng.uniform(0.6, 1.4)) + rows[n * 4:]
+    out, seen, seen_role = [], Counter(), Counter()
+    cap_role = max(2, -(-n // max(1, len(roles or DEFAULT_ROLES))))  # 역할마다 n/역할수(올림), 최소 2
     for row in rows:
         lv = json.loads(row[8])
         if level and not lv.get(level):
             continue
         if seen[row[6]] >= per_item:
             continue
+        if roles and seen_role[row[14]] >= cap_role:
+            continue
         seen[row[6]] += 1
+        seen_role[row[14]] += 1
         out.append(as_dict(row))
         if len(out) >= n:
             break
@@ -197,8 +245,8 @@ def cheaper(con, n=20, min_cost=2000, level=None, main_item=None, per_item=3, me
 
 
 def as_dict(row) -> dict:
-    dish, n_r, n_c, now, ref, chg, main, items, levels, meal, cuisine, servings, now_ps, ref_ps = row
-    return {"dish": dish, "meal": meal, "cuisine": cuisine, "n_recipes": n_r, "n_costed": n_c,
+    dish, n_r, n_c, now, ref, chg, main, items, levels, meal, cuisine, servings, now_ps, ref_ps, role = row
+    return {"dish": dish, "meal": meal, "cuisine": cuisine, "role": role, "n_recipes": n_r, "n_costed": n_c,
             "servings": servings, "cost_now": now, "cost_ref": ref, "cost_per_serving_now": now_ps, "cost_per_serving_ref": ref_ps,
             "change_pct": chg, "main_item": main, "typical_items_g": json.loads(items), "levels": json.loads(levels)}
 
@@ -219,11 +267,17 @@ def _selfcheck():
     cats = {"포도주스": ("음료", "기타"), "사과잼": ("디저트·간식", "기타"), "황태강정": ("식사", "한식"), "쌀강정": ("디저트·간식", "한식"),
             "감자조림": ("식사", "한식"), "짜장면": ("식사", "중식"), "돈까스": ("식사", "일식"), "까르보나라": ("식사", "양식"),
             "쌀국수": ("식사", "아시아"), "부침개반죽": ("기타", "한식"), "떡볶이": ("식사", "한식"), "식혜": ("음료", "한식"),
-            "티라미수": ("디저트·간식", "기타"), "샤인머스캣에이드": ("음료", "기타"), "과일샐러드": ("디저트·간식", "양식")}
+            "티라미수": ("디저트·간식", "기타"), "샤인머스캣에이드": ("음료", "기타"), "과일샐러드": ("디저트·간식", "양식"),
+            "고구마맛탕": ("디저트·간식", "한식")}
     assert dish_of("설탕 없이 만든 샐러드") is None and dish_of("맛있는 감자 샐러드") == "감자샐러드" and dish_of("설탕 시럽") is None
     for d, want in cats.items():
         assert category_of(d) == want, (d, category_of(d), want)
     assert servings_of("6인분 이상") == 6 and servings_of("2인분") == 2 and servings_of("아무나") is None
+    roles = {"양배추사과샐러드": "반찬", "감자조림": "반찬", "황태양념구이": "메인", "돼지고기말이": "메인", "김치찌개": "국찌개", "제육볶음": "메인",
+             "김치볶음밥": "주식", "잔치국수": "주식", "멸치볶음": "반찬", "프렌치토스트": "간단", "삼계탕": "국찌개", "닭갈비": "메인", "두부조림": "메인",
+             "알감자버터구이": "반찬", "돈까스": "메인", "까르보나라": "주식", "오이무침": "반찬", "계란말이": "메인", "미역국": "국찌개"}
+    for d, want in roles.items():
+        assert role_of(d) == want, (d, role_of(d), want)
     print("dish ok")
 
 
@@ -235,7 +289,7 @@ if __name__ == "__main__":
         n = int(sys.argv[sys.argv.index("--n") + 1]) if "--n" in sys.argv else 30
         for d in cheaper(con, n):
             ps = f"{d['servings']:g}인분·1인 {d['cost_per_serving_now']:,}원" if d["servings"] else "인분 미상"
-            print(f"{-d['change_pct']:5.1f}%↓ {d['cost_ref']:>7,}→{d['cost_now']:>7,}원 ({ps})  {d['dish']} [{d['meal']}·{d['cuisine']}·{d['n_recipes']}건·"
+            print(f"{-d['change_pct']:5.1f}%↓ {d['cost_ref']:>7,}→{d['cost_now']:>7,}원 ({ps})  {d['dish']} [{d['meal']}·{d['cuisine']}·{d['role']}·{d['n_recipes']}건·"
                   f"주재료 {d['main_item']}] {','.join(f'{k}:{v}' for k, v in d['typical_items_g'].items())[:50]}")
     else:
         _selfcheck()
