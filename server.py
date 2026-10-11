@@ -30,8 +30,9 @@ TOOLS = [
                     "'요즘 뭐가 싸졌나', '싸진 걸로 뭐 해 먹나'에 먼저 부른다. 내린 원인(풍작·수입·소비 감소 등)은 모르니 품목명으로 인터넷 조사 도구에 묻는다.",
      "inputSchema": {"type": "object", "properties": {"n": {"type": "integer", "description": "내린 것·오른 것 각각 몇 개(기본 10)"}}}},
     {"name": "cheaper_dishes",
-     "description": "석 달 전보다 재료 원가가 많이 내린 음식을 추천한다. 결과는 음식 이름·레시피 수·지금 원가·석 달 전 원가·변동률·주재료·"
-                    "대표 재료 구성(품목:g)·난이도 분포. 음식 단위 통계라 특정 레시피나 링크는 없다.",
+     "description": "석 달 전보다 재료 원가가 내린 음식(요리)을 추천한다. '무엇으로 뭘 해 먹나', '○○를 주재료로 싸게 먹을 수 있는 음식은', "
+                    "'초급 요리 추천'처럼 음식·요리·메뉴를 묻는 질문은 이 도구다(item_prices는 품목 가격만 준다). 결과는 음식 이름·레시피 수·지금 원가·"
+                    "석 달 전 원가·변동률·주재료·대표 재료 구성(품목:g)·난이도 분포. 음식 단위 통계라 특정 레시피나 링크는 없다.",
      "inputSchema": {"type": "object", "properties": {
          "n": {"type": "integer", "description": "몇 개(기본 10, 최대 50)"},
          "level": {"type": "string", "description": "난이도로 좁히기: 아무나·초급·중급·고급(그 난이도 레시피가 있는 음식)"},
@@ -43,7 +44,8 @@ TOOLS = [
          "query": {"type": "string", "description": "음식 이름 또는 그 일부(예: 감자조림)"},
          "n": {"type": "integer", "description": "몇 개(기본 5)"}}, "required": ["query"]}},
     {"name": "item_prices",
-     "description": "농축수산물 품목의 지금 가격과 석 달 전 가격(원/kg)과 변동률. 품목을 안 주면 가격을 아는 품목 전부.",
+     "description": "농축수산물 품목(양파·돼지고기·포도…)의 지금 가격과 석 달 전 가격(원/kg)과 변동률. 품목 시세만 묻는 질문용이다 - 음식·요리·"
+                    "메뉴를 물으면 cheaper_dishes 또는 dish_cost를 부른다. 품목을 안 주면 가격을 아는 품목 전부.",
      "inputSchema": {"type": "object", "properties": {
          "items": {"type": "array", "items": {"type": "string"}, "description": "품목명(예: 양파, 돼지고기, 포도)"}}}},
     {"name": "public_recipes",
