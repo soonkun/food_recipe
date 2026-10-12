@@ -7,13 +7,19 @@
 - `python3 collect.py 10000recipe` - 만개의레시피(약 28만 건)를 ID 순서대로 훑는다(6,828,xxx부터 7,084,xxx). 재료는 이름·양·구분으로 따로,
   난이도("아무나/초급/중급/고급")·시간·인분은 페이지의 JSON-LD와 요약칸에서. 작성자의 조리문·사진·설명은 저작권 때문에 저장하지 않는다(이름·재료·링크만, 원가 계산용). 공개 API가 없어 페이지를 읽는다(robots.txt 허용 범위).
   동시 4개, 약 10 ID/s → 전체 8시간쯤. 끊겨도 다시 돌리면 `scan` 표에 없는 ID만 이어서 본다. 로그: `data/collect.log`.
-- `python3 collect.py rda` - 농촌진흥청 농식품정보누리 레시피 API(537건, 난이도·열량·1인분 가격 포함). 농식품 공공데이터 포털(data.mafra.go.kr)의
-  `Grid_20150827000000000226_1`(기본)·`…227_1`(재료)·`…228_1`(과정) 세 API를 **같은 계정으로 활용신청**해야 그 계정 키(`data/.env`의 `RDA_FOOD_API_KEY`,
-  '날짜8자리+영문 21자' 꼴)로 받아진다. 신청 안 한 API는 `INFO-100 인증키가 유효하지 않습니다`로 거절된다(2026-10-12 실측 - 이 키가 지금 그 상태).
-  **211.237.50.150:7080은 브라우저가 아닌 User-Agent(curl 기본, Python-urllib)의 요청을 응답 없이 버린다** - 손으로 확인할 때도 `curl -A Mozilla/5.0`.
+- `python3 collect.py nongsaro` - **농사로 '이달의 음식 정보' Open API**(`api.nongsaro.go.kr/service/monthFd`, XML). 키는 농사로 마이페이지 → OPEN API 신청내역의
+  인증키('날짜8자리+영문 21자' 꼴, 2026-10-07 승인) → `data/.env`의 `NONGSARO_API_KEY`. 월별 목록 `monthNewFdLst?thisYear=&thisMonth=` → 건별 상세 `monthNewFdDtl?cntntsNo=`
+  (재료 `matrlInfo`, 조리법 `ckngMthInfo`, 열량 `energyQy` 등). 12개월이 다 찬 해는 2016~2019뿐이라 그 네 해 + 올해를 훑는다(같은 cntntsNo는 한 번).
+  **이 서버(59.150.32.1)에서는 api.nongsaro.go.kr·www.rda.go.kr 로 TCP 자체가 막혀 있다**(2026-10-12 실측, 사용자 PC에서는 열림). 5초 안에 포기하므로
+  닿는 PC에서 `python3 collect.py nongsaro --dump nongsaro.json` 으로 받아 서버에서 `python3 collect.py nongsaro --file nongsaro.json` 으로 넣는다.
+  손으로 확인: 브라우저에 `http://api.nongsaro.go.kr/service/monthFd/monthNewFdLst?apiKey=<키>&thisYear=2019&thisMonth=10`.
+- `python3 collect.py rda` - 농식품 공공데이터 포털(data.mafra.go.kr) 레시피 API(537건, 난이도·열량·1인분 가격 포함). **위 농사로 키와는 다른 포털**이라
+  그 포털 계정으로 `Grid_20150827000000000226_1`(기본)·`…227_1`(재료)·`…228_1`(과정) 세 API를 활용신청해야 그 계정 키(`RDA_FOOD_API_KEY`)로 받아진다.
+  신청 안 한 API는 `INFO-100 인증키가 유효하지 않습니다`. 211.237.50.150:7080은 브라우저가 아닌 User-Agent(curl 기본, Python-urllib)의 요청을 응답 없이
+  버린다 - 손으로 확인할 때도 `curl -A Mozilla/5.0`. (2026-10-12: 이 포털 계정은 아직 없음)
 - 결과: `data/recipes.sqlite` - `recipe`(출처·이름·인분·시간·난이도·조리법 JSON) + `ingredient`(recipe_id·이름·양·구분) + `scan`(훑은 ID).
 
-이 서버에서 막혀 있는 곳(타임아웃): 식품안전나라 레시피 API(openapi.foodsafetykorea.go.kr), 농사로(nongsaro.go.kr). 방화벽이 풀리면 추가.
+이 서버에서 막혀 있는 곳(TCP 무응답): 식품안전나라 레시피 API(openapi.foodsafetykorea.go.kr), 농사로(api/www.nongsaro.go.kr), www.rda.go.kr. 둘 다 다른 PC에서 받은 파일을 넣는 길(`--file`)이 있다.
 
 ## 2단계: 가격 모으기 (`prices.py`)
 - `python3 prices.py seoul [--since 2025-01-01]` - 서울시 열린데이터 생필품 가격(전통시장·대형마트, 주 1회, 농축수산물 60여 품목). 결과: `price` 표(출처·날짜·품목·단위·가격·시장).
@@ -48,7 +54,7 @@
   사용자는 `+ → 대화 설정 → 도구 설정`에서 이 서버를 켜야 모델에게 보인다.
 - 도구: `price_movers`(내린/오른 품목 + 내린 품목마다 싸진 음식 둘) → `cheaper_dishes`(난이도·주재료로 좁히기) → `dish_cost`(음식 이름으로 통계) ·
   `item_prices`(품목 가격) · `public_recipes`(공공 자료 레시피만 재료·링크 제공). **내린 원인**은 이 서버가 모른다 - MOPAN의 인터넷 조사 도구가 품목명으로 찾는다.
-- 공공 레시피 코퍼스(public_recipes의 재료): `collect.py rda`(농진청, 키 있음 - API 호스트 응답 대기)와 `collect.py foodsafety`(식품안전나라 COOKRCP01,
+- 공공 레시피 코퍼스(public_recipes의 재료): `collect.py nongsaro`(농사로 이달의 음식, 키 있음 - 이 서버에서 호스트 막힘)와 `collect.py foodsafety`(식품안전나라 COOKRCP01,
   1,100여 건, 공공누리). 식품안전나라 호스트(116.67.90.152)는 이 서버에서 막혀 있어 다른 PC에서 받은 JSON을 `data/_incoming/foodsafety/`에 두고 돌린다:
   `http://openapi.foodsafetykorea.go.kr/api/<키>/COOKRCP01/json/1/1000` 과 `…/1001/2000` 두 번 저장. 키는 `data/.env`의 `FOODSAFETY_API_KEY`.
 - 매일 06:30 크론: `daily.sh`(서울 가격 → 품목 원/kg → 레시피 원가 → 음식 통계). 로그 `data/daily.log`.

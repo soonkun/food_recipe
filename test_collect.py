@@ -38,3 +38,33 @@ def test_mafra_row_converts_to_won_per_kg():
     assert mafra_row({**r, "unit_nm": "개"}) is None
     days = mafra_dates("2026-01-01", dt.date(2026, 10, 12))
     assert days[0] == "2026-10-12" and len(days) == 15 + 29 and "2026-07-28" in days  # 76일 전
+
+
+def test_nongsaro_parse_maps_detail_to_recipe():
+    xml = """<response><header><resultCode>00</resultCode></header><body><items><item>
+      <cntntsNo>207957</cntntsNo><fdNm>감자전</fdNm>
+      <matrlInfo>&lt;p&gt;주재료 : 감자 2개, 양파 1/2개&lt;br&gt;양념 : 소금 약간&lt;/p&gt;</matrlInfo>
+      <ckngMthInfo>1. 감자를 간다.&lt;br&gt;2. 부친다.</ckngMthInfo><energyQy>210</energyQy>
+    </item></items></body></response>"""
+    (d,) = collect.ns_parse(xml)
+    assert d["fdNm"] == "감자전" and d["energyQy"] == "210"
+    assert collect.ns_steps(d["ckngMthInfo"]) == ["감자를 간다.", "부친다."]
+    assert collect.parse_fs_parts(collect.ns_text(d["matrlInfo"])) == [
+        ("감자", "2개", "주재료"), ("양파", "1/2개", "주재료"), ("소금", "약간", "양념")]
+
+
+def test_nongsaro_parse_stops_on_error_code():
+    import pytest
+    with pytest.raises(SystemExit):
+        collect.ns_parse("<response><header><resultCode>900</resultCode><resultMsg>인증키 오류</resultMsg></header></response>")
+
+
+def test_nongsaro_rows_saved(tmp_path, monkeypatch):
+    monkeypatch.setattr(collect, "DB", str(tmp_path / "r.sqlite"))
+    row = (3, {"cntntsNo": "1", "fdNm": "감자전", "fdSeCode": "A", "rtnFileCours": "http://x/a/", "rtnStreFileNm": "b.jpg"},
+           {"fdNm": "감자전 ", "matrlInfo": "감자 2개, 소금 약간", "ckngMthInfo": "1. 간다<br>2. 부친다", "energyQy": "210"})
+    collect.collect_nongsaro([row])
+    con = sqlite3.connect(collect.DB)
+    name, cat, image, steps, cal = con.execute("SELECT name, category, image, steps, calorie FROM recipe WHERE source='nongsaro'").fetchone()
+    assert (name, cat, image, cal) == ("감자전", "3월/A", "http://x/a/b.jpg", "210") and json.loads(steps) == ["간다", "부친다"]
+    assert con.execute("SELECT name, qty FROM ingredient ORDER BY seq").fetchall() == [("감자", "2개"), ("소금", "약간")]

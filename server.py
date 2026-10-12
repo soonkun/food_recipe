@@ -21,7 +21,7 @@ import cost
 import dish
 
 PROTOCOL_VERSION = "2025-06-18"
-PUBLIC_SOURCES = ("rda", "foodsafety")
+PUBLIC_SOURCES = ("nongsaro", "rda", "foodsafety")
 NOTE_DISH = ("원가는 그 음식 레시피 여러 건의 중앙값(가격을 아는 재료 기준, 양념 포함)이고 cost_now/cost_ref는 레시피 한 번 분량(보통 servings인분), "
              "cost_per_serving_*은 1인분 환산이다 - 답할 때는 'N인분 기준 X원(1인분 Y원)'으로 말한다. meal(식사·음료·디저트·간식·기타)과 "
              "cuisine(한식·중식·일식·양식·아시아·기타)은 이름으로 나눈 분류다. 특정 사이트의 레시피가 아니라 음식 단위 통계라 링크는 없다. "
@@ -116,7 +116,7 @@ def t_public(a):
             steps_list = json.loads(steps) if steps else []
         except ValueError:
             steps_list = []
-        out.append({"name": name, "source": {"rda": "농촌진흥청 농식품정보누리", "foodsafety": "식품안전나라(식약처)"}.get(source, source),
+        out.append({"name": name, "source": {"nongsaro": "농사로 이달의 음식(농촌진흥청)", "rda": "농촌진흥청 농식품정보누리", "foodsafety": "식품안전나라(식약처)"}.get(source, source),
                     "category": category, "level": level, "servings": servings, "cook_time": cook_time, "calorie": calorie,
                     "cost_now": now, "cost_ref": ref, "coverage": cov, "ingredients": [{"name": nm, "qty": qt} for nm, qt in ingredients],
                     "steps": steps_list, "tip": summary, "url": url})
