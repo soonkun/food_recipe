@@ -7,8 +7,10 @@
 - `python3 collect.py 10000recipe` - 만개의레시피(약 28만 건)를 ID 순서대로 훑는다(6,828,xxx부터 7,084,xxx). 재료는 이름·양·구분으로 따로,
   난이도("아무나/초급/중급/고급")·시간·인분은 페이지의 JSON-LD와 요약칸에서. 작성자의 조리문·사진·설명은 저작권 때문에 저장하지 않는다(이름·재료·링크만, 원가 계산용). 공개 API가 없어 페이지를 읽는다(robots.txt 허용 범위).
   동시 4개, 약 10 ID/s → 전체 8시간쯤. 끊겨도 다시 돌리면 `scan` 표에 없는 ID만 이어서 본다. 로그: `data/collect.log`.
-- `RDA_FOOD_API_KEY=… python3 collect.py rda` - 농촌진흥청 농식품정보누리 레시피 API(537건, 난이도·열량·1인분 가격 포함).
-  키는 koreanfood.rda.go.kr → 오픈API에서 받는다(샘플키는 5건까지).
+- `python3 collect.py rda` - 농촌진흥청 농식품정보누리 레시피 API(537건, 난이도·열량·1인분 가격 포함). 농식품 공공데이터 포털(data.mafra.go.kr)의
+  `Grid_20150827000000000226_1`(기본)·`…227_1`(재료)·`…228_1`(과정) 세 API를 **같은 계정으로 활용신청**해야 그 계정 키(`data/.env`의 `RDA_FOOD_API_KEY`,
+  '날짜8자리+영문 21자' 꼴)로 받아진다. 신청 안 한 API는 `INFO-100 인증키가 유효하지 않습니다`로 거절된다(2026-10-12 실측 - 이 키가 지금 그 상태).
+  **211.237.50.150:7080은 브라우저가 아닌 User-Agent(curl 기본, Python-urllib)의 요청을 응답 없이 버린다** - 손으로 확인할 때도 `curl -A Mozilla/5.0`.
 - 결과: `data/recipes.sqlite` - `recipe`(출처·이름·인분·시간·난이도·조리법 JSON) + `ingredient`(recipe_id·이름·양·구분) + `scan`(훑은 ID).
 
 이 서버에서 막혀 있는 곳(타임아웃): 식품안전나라 레시피 API(openapi.foodsafetykorea.go.kr), 농사로(nongsaro.go.kr). 방화벽이 풀리면 추가.
@@ -16,10 +18,12 @@
 ## 2단계: 가격 모으기 (`prices.py`)
 - `python3 prices.py seoul [--since 2025-01-01]` - 서울시 열린데이터 생필품 가격(전통시장·대형마트, 주 1회, 농축수산물 60여 품목). 결과: `price` 표(출처·날짜·품목·단위·가격·시장).
   키는 `data/.env`의 `SEOUL_API_KEY=…` (git에 안 올라감). 자료는 2025-01부터 있다.
-- 도매(1순위, 소유자 방침 - 폭락 신호가 먼저 나오고 품목이 넓다): 농림축산식품 공공데이터포털 '전국 공영도매시장 정산가격'(Grid_20240625000000000653_1,
-  211.237.50.150:7080). 키는 `data/.env`의 `MAFRA_API_KEY=…`. **2026-10-11 밤 그 API 서버가 응답을 안 해(TCP는 열리고 HTTP가 안 돌아옴, 3시간
-  재시도) 수집기는 아직 못 붙였다** - 돌아오면 `prices.py mafra`를 더하고 `price` 표에 source='mafra', 단위 kg으로 넣는다(`cost.py`는 이미 mafra를
-  먼저 쓰게 되어 있다). KAMIS(www.kamis.or.kr)는 이 서버에서 막혀 있다.
+- `python3 prices.py mafra [--since …] [--max-requests 900]` - 도매(1순위, 소유자 방침 - 폭락 신호가 먼저 나오고 품목이 넓다): 공공데이터포털
+  '한국농수산식품유통공사_전국 공영도매시장 정산정보'(data.go.kr 15141809, `https://apis.data.go.kr/B552845/katSale/trades`,
+  `cond[trd_clcln_ymd::EQ]=YYYY-MM-DD`). 키는 `data/.env`의 `MAFRA_API_KEY`(data.go.kr 일반 인증키 64자리). 원가가 보는 두 창(최근 14일·76~104일 전)만
+  날짜별로 받아 원/kg으로 바꿔 `price`(source='mafra', 품목=중분류명, 품종=소분류명)에 넣는다. 날짜당 수만 행이라 요청 수 한도 안에서 멈추고 다음 날 이어
+  받는다. **2026-10-12 현재 키가 `SERVICE_KEY_IS_NOT_REGISTERED_ERROR(30)`** - data.go.kr 마이페이지 → 활용신청 현황에서 이 API가 승인됐는지, 복사한 키가
+  그 계정의 것인지 확인해야 한다(실시간 경매정보 15141808에도 같은 응답). `api.agromarket.kr` 원천 주소는 열려 있지만 빈 결과만 준다. KAMIS는 이 서버에서 막혀 있다.
 
 ## 3단계: 원가와 추천 (`norm.py`, `cost.py`)
 - `norm.py` - 재료 이름 → 가격 품목(`canon`: "다진 마늘"→마늘, "달걀"→계란, "대패삼겹살"→돼지고기 …), 양 → g(`grams`: 1/2개·2큰술·100g·약간 …).

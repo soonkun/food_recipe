@@ -275,7 +275,7 @@ if __name__ == "__main__":
     ap.add_argument("--workers", type=int, default=4)
     a = ap.parse_args()
     if a.source == "rda":
-        collect_rda(env("RDA_FOOD_API_KEY") or sys.exit("RDA_FOOD_API_KEY가 없다 (환경변수 또는 data/.env; koreanfood.rda.go.kr 오픈API 키)"))
+        collect_rda(env("RDA_FOOD_API_KEY") or sys.exit("RDA_FOOD_API_KEY가 없다 (환경변수 또는 data/.env; 농식품 공공데이터 포털 data.mafra.go.kr 키 - 그 계정이 레시피 기본·재료·과정정보 API를 신청해 두어야 한다)"))
     elif a.source == "foodsafety":
         collect_foodsafety(a.file)
     else:
